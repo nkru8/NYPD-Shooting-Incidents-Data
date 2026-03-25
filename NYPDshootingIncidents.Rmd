@@ -1,0 +1,157 @@
+---
+title: "NYPD Shooting Incidents"
+author: "Nathan Krueger" 
+output: html_document
+date: "2025-07-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Source: https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic
+
+### GitHub Location: https://github.com/njk2002/Data-Science-as-a-Field-Projects/blob/main/NYPD%20Shooting%20Assignment%20(Final).html
+
+#### Summary of the data: The data set contains information regarding shootings that occured in New York City dating back to 2006. Variables include the age group, sex, and race of both the victim and perpetrator, location coordinates, neighborhood, precinct etc. 
+
+## Data Import then Removing Columns to Clean it Up
+
+```{r, echo=TRUE}
+#loading in the proper packages
+library(tidyverse)
+library(dplyr)
+
+#converting our CSV file to NYPDshooting
+NYPDshooting <- read.csv("E:/Schoolwork/NYPD_Shooting_Incident_Data__Historic_ (1).csv")
+#removing unnecessary columns
+NYPDshooting <- NYPDshooting %>% select(-JURISDICTION_CODE, -LOC_CLASSFCTN_DESC, -LOCATION_DESC, -X_COORD_CD, -Y_COORD_CD, -Lon_Lat, -INCIDENT_KEY, -STATISTICAL_MURDER_FLAG, -LOC_OF_OCCUR_DESC)
+
+#converting the appropriate variables to factor by column
+NYPDshooting <- NYPDshooting %>%
+  mutate(across(c(BORO, PRECINCT, PERP_AGE_GROUP, PERP_SEX, PERP_RACE, VIC_AGE_GROUP, VIC_SEX, VIC_RACE))) #changing apropriate variables to factor
+
+specificcolumns <- c("PERP_AGE_GROUP", "PERP_SEX", "PERP_RACE", "VIC_AGE_GROUP", "VIC_RACE", "Latitude", "Longitude") #this is so that we can run the cleaning function in one go instead of writing it out for every column
+
+NYPDshooting <- NYPDshooting %>%
+  mutate(across( # modifying the dataset, across lets us use multiple columns
+    all_of(specificcolumns), # gathering the previous function and making sure that every column we need is selected 
+    ~ ifelse(. %in% c("", "(null)", "unknown") | is.na(.), "UNKNOWN", .) 
+  )) # here (From left to right) we start of with ~ which tells what follows to apply its logic to all columns... in this case its "ifelse" . %in% gathers what we tell it to of what we want to switch. Then we add "|" which means OR. is.na is used to check if a value is missing (in general, this is unnecessary because we can just use a string to do blanks or NA) then we write to replace it with unknown. Then we add the period so we let the program know to leave it alone if its not blank or null or unknown.
+
+str(NYPDshooting)
+
+```
+
+#### Summary: After a basic cleaning of the dataset, we can see when and where the shootings occurred, and the demographics of parties involved. I also changed anything that said "null" or "unknown" to just "unknown" because there are too many rows to delete that have missing data. Regarding the data as unknown can help gather insight to that as well. I then converted the necessary variables to factor. 
+
+---
+
+## Visualization 1 - This is made using leaflet, a way to use interactive maps wihtout having to get an API
+
+```{r, echo=TRUE, warning=FALSE}
+#load in the proper packages for a map
+library(leaflet) # I used leaflet because i needed to get an easy to read map without going through the trouble of getting an API
+library(leaflet.extras) # this has the heat map in it
+
+NYPDshooting$Longitude <- as.numeric(NYPDshooting$Longitude) # making sure coordinates are numeric
+NYPDshooting$Latitude <- as.numeric(NYPDshooting$Latitude) # the $ takes that column from the data set
+NYPDshooting <- NYPDshooting[!is.na(NYPDshooting$Longitude) & !is.na(NYPDshooting$Latitude), ] #removing rows where long and lat is NA
+
+leaflet(NYPDshooting) %>%
+  addProviderTiles(providers$CartoDB.Voyager) %>% #addprovidertiles is a useful tool for adding 3rd party maps. we then added the voyager map from CartoDB
+  addHeatmap( # adding heat map
+    lng = ~Longitude,
+    lat = ~Latitude,
+    blur = 10, # makes it more or less of a circle, play around with it for preference
+    max = .05, #color scaling, take it out to see the difference it makes
+    radius = 5.7 # size of the circles
+  )
+
+```
+
+#### Summary: Here I chose to create a heatmap. In my opinion its the best type of map to analyze when dealing with a lot of coordinates. My first thought approaching the visualization is that I wanted something basic. Using a heatmap has always appealed to me so I went ahead and made that my first visualization. I did not want to entertain the process of using an API and I also did not want to use the dull maps from ggplot, it needed to be an easy to see map, incase someone didnt know where new york boroughs are. This is also just a fun visualization to see where the shootings all occured.
+
+## Model 1 - Shootings by Time of Day
+
+```{r, echo=TRUE, fig.width = 8, fig.height = 6, warning = FALSE, eval = TRUE, message=FALSE}
+
+#load in the necessary packages
+library(ggplot2)
+library(scales)  #package to make the numbers readable
+library(hms)
+
+NYPDshooting$OCCUR_TIME <- as_hms(NYPDshooting$OCCUR_TIME) #making sure time is ran as a time object
+
+top_30_days <- NYPDshooting %>%
+  count(OCCUR_DATE) %>% # counting the number of incidents per date
+  top_n(20, n) %>% # selecting the the top 20 dates that are most repeated
+  pull(OCCUR_DATE) # making the day into a vector
+
+NYPDsample <- NYPDshooting %>%
+  filter(OCCUR_DATE %in% top_30_days) # this just only keeps the rows that were selected in the previous function
+
+ggplot(NYPDsample, aes(x = OCCUR_TIME, y = OCCUR_DATE)) + # setting the plot. x axis is time and y axis is date
+  geom_point(alpha = .3, color = "blueviolet") + # geom point is so we can get a scatter plot, the alpha is to make some dots transparent, and color is setting the color of the dots
+  scale_x_time( # this is where we need to use the package scales since we're using time data. This customizes the x axis to time
+    breaks = hms::as_hms(seq(0, 86400, by = 7200)), # this makes hash marks every 0-86,400 seconds (24 hours), every 7,200 seconds (2 hours). I'm only able to run the code by seconds and not by hours. So for this we calculated it down to the second.
+    labels = time_format("%H:%M") # reformats the time to read it easier
+  ) +
+  labs( # now adding labels
+    title = "Times of Shootings given the Top 20 days of # of Shootings ",
+    x = "Time",
+    y = "Date"
+  ) +
+  theme_minimal() # keeps it clean
+
+```
+
+#### Summary: This plot shows us what times most of the shootings occured using a range of the top 20 days they occurred. What we can observe is that most of the shootings occured while it was dark outside. This gives us a clear trend of when the shootings are occuring mostly. Not only that but having out alpha set to .3 gives us a look at recurring times on each day, and when certain times and days had the most activity
+
+## Visualization 2 - Count of Perp Age Group
+
+```{r, echo=TRUE, warning = FALSE, eval = TRUE, message=FALSE}
+
+# load in packages
+library(ggplot2)
+library(ggrepel) # will be used for labeling the chart
+library(dplyr)
+
+valid_age_groups <- c("<18", "18-24", "25-44", "45-64", "65+", "UNKNOWN") # here we're gathering all the age groups including unknown because in the data set there were some random numbers that didn't make sense in the age group column that were not age groups. So by concatenating the age groups before hand we're able to eliminate the numbers being skewed down the line.
+
+NYPDshooting <- NYPDshooting %>%
+  filter(PERP_AGE_GROUP %in% valid_age_groups) # this is to filter out anything in our prep age group column that isn't an actual age group or unknown. If a row does not include age groups we specified on the first function, they will be removed. It's good to note that if we're not going to return the data set to its original value then this would be good to do last, or at least before a function using location so we can maximize those values using long and lat
+
+age_group_counts <- NYPDshooting %>%
+  mutate(PERP_AGE_GROUP =  as.character(PERP_AGE_GROUP)) %>% # this line converts age group to a character. In our case we need this because i originally factored it in our first program.
+  count(PERP_AGE_GROUP) %>% # this line goes over each row and counts how many times each age group occurs. naturally the program will create that column and call in "n"
+  mutate( # combining the next two lines
+    percent = n / sum(n), # here we are doing a basic percentage calculation
+    label = paste0(PERP_AGE_GROUP, " (", sprintf("%.2f", percent * 100), "%)") # this line is confusing to look at so I'll explain it in the order it runs. sprintf turns numbers into strings (so we can label properly without the program thinking we're running numbers through labels), the %.2f is a format to display -> % is use percentage, .2 is use 2 decimal places, and f is using a decimal number. percent * 100 is taking our percent column and multiplying it by 100 so it displays the proper # (basically the second part of a percentage calculation). The sprint f command gives us our percentage with two decimal places, then we put the % as a string behind it since we're labeling. then paste 0 reads our age group then combines the % with it as strings. this will assign it as the label in age_count_groups
+  )
+
+print(age_group_counts) # this is so we can see where we're taking some of the columns from
+
+ggplot(age_group_counts, aes(x = "", y = n, fill = PERP_AGE_GROUP)) + # setting up the chart, the blank x axis is so the chart can be round (polar coordinates)
+  geom_col(width = 1, color = "white") + # first step is to create a bar graph, the best way to visualize count among a few categories. width = 1 gives the full space meaning no blanks when its converted. Color is essentially spacing
+  coord_polar(theta = "y") + #  i wanted a pie chart though so coord_polar is the first step to doing that. theta = y takes it and makes it round because it transforms the x axis into polar coordinates. No mathematical knowledge of problem solving polar coordinates is needed, R knows to use polar coordinates for a pie chart
+  theme_void() + # removes all the extra stuff, a lot like theme_minimal()
+  labs( # adding our labels
+    title = "Visual Proportions of Perp Age Groups by Count",
+    fill = "Perps Age Group"
+  ) +
+  geom_label_repel( # this command is for tweaking and adjusting the pie chart to our visual likeness
+    aes(label = label), # this adds the boxed labels you'll see in the pie chart
+    position = position_stack(vjust = .5), # centering the label to the middle of the slice
+    show.legend =  FALSE, # hides the legend for the labels because they're already on the pie
+    size = 3, # size of the text in the labels
+    direction = "y" # this controls the direction in which the labels position, so y is gonna be vertical
+  )
+  
+```
+
+#### Summary: I created a pie chart to visualize the count of each age group in proportion to each other to see which age groups commit the crime the most. A simple bar chart would have worked as well but personally I'm a fan of pie charts. In our code we converted the necessary data to make it work, i.e. characters. Then we needed to make sure our labeling was converted correctly as well so the program wouldn't have mistook it as further calculations. I then created a plot that was first gathered as a bar chart, but then converted to a pie chart using polar coordinates. I then used geom_label_repel to adjust the pie chart to it was visually appealing and not all over the place. You can cut that part of the program out and see what it does without it.
+
+### Conclusion: For this project I coded 3 visualizations and analysis that help represent some of the trends of the data set. For my first visualization, I thought it would be interesting to create a heat map over an interactive map so we'd see where the shootings occured. This is great for people viewing the project that are unfamiliar with New York City. I myself am unfamiliar with a more specficic sense of location in New York City. Leaflet allowed me to add my heat map to an interactive map so that we could see exactly where the shootings occured in NYC, but also when you zoom out you get a visual idea of where it happens most, and where it occurs the least. My second visualization was a pie chart that represents the proportions of perpetrator age groups to the amount of shootings that occured. I chose a pie chart because I personally find it more visually appealing than a bar chart. Normally in R, it will take a little bit more code, but the practice is always good. For my model I chose to create a plot of what times the shootings occured. I used the 20 days that were repeated most on the dataset, also meaning the top 20 days with the most shootings. I factored time by 2 hours so it would fit the graph. I also added an alpha to that each dot has density - meaning that if it's darker more than one shooting occured at that time. I created this to see if there was a trend in the time category, if the shootings were favored to happen later or earlier in the day. The plot showed me that more shootings occured in the early mornings and late evenings when the sun was not out. 
+
+### Bias: This is where the bias comes in - I could compare my scatter plot to my pie chart and say that there are more unknown perps becuase most of the shootings happened at night, meaning it's harder to see who did it whether that be through witness or possible security camera. This represents bias because there's no defenitive answer to that question - it's just a mere guess. Mitigating the bias is to only represent the facutal data and use the visulaizations and models to accurately represent what occurs within the data set. A comparison to one another stems bias because there is no proof that this could be that.
